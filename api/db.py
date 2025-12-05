@@ -1,34 +1,56 @@
 """
 Supabase Database Client for Vatican Monitor
+Using REST API directly to avoid async issues in serverless
 """
 import os
-from supabase import create_client, Client
+import json
+import requests
 from datetime import datetime
 
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 
 
-def get_client() -> Client:
-    """Get Supabase client instance."""
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def _headers():
+    return {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+    }
+
+
+def _api_url(table: str) -> str:
+    return f"{SUPABASE_URL}/rest/v1/{table}"
 
 
 # ============ DATES ============
 
 def get_dates() -> list:
     """Get all target dates."""
-    client = get_client()
-    result = client.table('target_dates').select('date').execute()
-    return [row['date'] for row in result.data]
+    try:
+        response = requests.get(
+            _api_url('target_dates'),
+            headers=_headers(),
+            params={'select': 'date'}
+        )
+        if response.status_code == 200:
+            return [row['date'] for row in response.json()]
+        return []
+    except Exception as e:
+        print(f"Error getting dates: {e}")
+        return []
 
 
 def add_date(date: str) -> bool:
     """Add a date to monitor."""
-    client = get_client()
     try:
-        client.table('target_dates').insert({'date': date}).execute()
-        return True
+        response = requests.post(
+            _api_url('target_dates'),
+            headers=_headers(),
+            json={'date': date}
+        )
+        return response.status_code in [200, 201]
     except Exception as e:
         print(f"Error adding date: {e}")
         return False
@@ -36,10 +58,13 @@ def add_date(date: str) -> bool:
 
 def remove_date(date: str) -> bool:
     """Remove a date from monitoring."""
-    client = get_client()
     try:
-        client.table('target_dates').delete().eq('date', date).execute()
-        return True
+        response = requests.delete(
+            _api_url('target_dates'),
+            headers=_headers(),
+            params={'date': f'eq.{date}'}
+        )
+        return response.status_code in [200, 204]
     except Exception as e:
         print(f"Error removing date: {e}")
         return False
@@ -49,24 +74,34 @@ def remove_date(date: str) -> bool:
 
 def get_status() -> dict:
     """Get monitor status."""
-    client = get_client()
-    result = client.table('monitor_status').select('*').eq('id', 1).execute()
-    if result.data:
-        return result.data[0]
-    return {
-        'check_count': 0,
-        'alerts_sent': 0,
-        'last_check': None,
-        'last_results': {}
-    }
+    try:
+        response = requests.get(
+            _api_url('monitor_status'),
+            headers=_headers(),
+            params={'id': 'eq.1'}
+        )
+        if response.status_code == 200 and response.json():
+            return response.json()[0]
+        return {
+            'check_count': 0,
+            'alerts_sent': 0,
+            'last_check': None,
+            'last_results': {}
+        }
+    except Exception as e:
+        print(f"Error getting status: {e}")
+        return {
+            'check_count': 0,
+            'alerts_sent': 0,
+            'last_check': None,
+            'last_results': {}
+        }
 
 
 def update_status(check_count: int = None, alerts_sent: int = None,
                   last_check: str = None, last_results: dict = None) -> bool:
     """Update monitor status."""
-    client = get_client()
-
-    updates = {}
+    updates = {'id': 1}
     if check_count is not None:
         updates['check_count'] = check_count
     if alerts_sent is not None:
@@ -75,19 +110,20 @@ def update_status(check_count: int = None, alerts_sent: int = None,
         updates['last_check'] = last_check
     if last_results is not None:
         updates['last_results'] = last_results
+    updates['updated_at'] = datetime.now().isoformat()
 
-    if updates:
-        updates['updated_at'] = datetime.now().isoformat()
-        try:
-            client.table('monitor_status').upsert({
-                'id': 1,
-                **updates
-            }).execute()
-            return True
-        except Exception as e:
-            print(f"Error updating status: {e}")
-            return False
-    return True
+    try:
+        headers = _headers()
+        headers['Prefer'] = 'resolution=merge-duplicates'
+        response = requests.post(
+            _api_url('monitor_status'),
+            headers=headers,
+            json=updates
+        )
+        return response.status_code in [200, 201]
+    except Exception as e:
+        print(f"Error updating status: {e}")
+        return False
 
 
 def increment_check_count() -> int:
@@ -110,30 +146,45 @@ def increment_alerts_sent() -> int:
 
 def get_alerted_products() -> set:
     """Get set of already alerted products."""
-    client = get_client()
-    result = client.table('alerted_products').select('product_key').execute()
-    return {row['product_key'] for row in result.data}
+    try:
+        response = requests.get(
+            _api_url('alerted_products'),
+            headers=_headers(),
+            params={'select': 'product_key'}
+        )
+        if response.status_code == 200:
+            return {row['product_key'] for row in response.json()}
+        return set()
+    except Exception as e:
+        print(f"Error getting alerted products: {e}")
+        return set()
 
 
 def add_alerted_product(product_key: str) -> bool:
     """Add a product to alerted set."""
-    client = get_client()
     try:
-        client.table('alerted_products').insert({
-            'product_key': product_key,
-            'alerted_at': datetime.now().isoformat()
-        }).execute()
-        return True
+        response = requests.post(
+            _api_url('alerted_products'),
+            headers=_headers(),
+            json={
+                'product_key': product_key,
+                'alerted_at': datetime.now().isoformat()
+            }
+        )
+        return response.status_code in [200, 201]
     except:
-        return False  # Probably already exists
+        return False
 
 
 def clear_alerted_products() -> bool:
     """Clear all alerted products."""
-    client = get_client()
     try:
-        client.table('alerted_products').delete().neq('id', 0).execute()
-        return True
+        response = requests.delete(
+            _api_url('alerted_products'),
+            headers=_headers(),
+            params={'id': 'gt.0'}
+        )
+        return response.status_code in [200, 204]
     except Exception as e:
         print(f"Error clearing alerted products: {e}")
         return False
