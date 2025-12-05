@@ -1,0 +1,17 @@
+# Environment
+.env
+venv/
+env/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+capture_*.py
+*.json.bak
