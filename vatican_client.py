@@ -305,13 +305,21 @@ class VaticanClient:
         """
         data = self.search_availability(visit_date, visitor_num, tag, who_id)
 
+        # Productos a excluir
+        excluded_products = ['palazzo papale', 'castel gandolfo']
+
         available = []
         for visit in data.get('visits', []):
             availability = visit.get('availability', '')
             if availability in ['AVAILABLE', 'LOW_AVAILABILITY']:
+                name = visit.get('name', '').lower()
+
+                # Excluir productos no deseados
+                if any(excluded in name for excluded in excluded_products):
+                    continue
+
                 # Aplicar filtro de producto si existe
                 if product_filter:
-                    name = visit.get('name', '').lower()
                     if product_filter.lower() not in name:
                         continue
                 available.append(visit)
