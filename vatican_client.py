@@ -14,11 +14,8 @@ from config import (
     DEFAULT_WHO_ID
 )
 
-# Webshare Proxy Configuration
-WEBSHARE_PROXY_HOST = os.getenv('WEBSHARE_PROXY_HOST', '')
-WEBSHARE_PROXY_PORT = os.getenv('WEBSHARE_PROXY_PORT', '')
-WEBSHARE_PROXY_USER = os.getenv('WEBSHARE_PROXY_USER', '')
-WEBSHARE_PROXY_PASS = os.getenv('WEBSHARE_PROXY_PASS', '')
+# Webshare API Configuration
+WEBSHARE_API_KEY = os.getenv('WEBSHARE_API_KEY', '')
 
 # User agents reales de navegadores comunes
 USER_AGENTS = [
@@ -32,26 +29,86 @@ USER_AGENTS = [
 BASE_URL = 'https://tickets.museivaticani.va'
 
 
-def get_proxy_config():
-    """Retorna la configuración de proxy si está disponible."""
-    if all([WEBSHARE_PROXY_HOST, WEBSHARE_PROXY_PORT, WEBSHARE_PROXY_USER, WEBSHARE_PROXY_PASS]):
-        proxy_url = f"http://{WEBSHARE_PROXY_USER}:{WEBSHARE_PROXY_PASS}@{WEBSHARE_PROXY_HOST}:{WEBSHARE_PROXY_PORT}"
-        return {
-            'http': proxy_url,
-            'https': proxy_url
-        }
-    return None
+class WebshareProxyManager:
+    """Gestiona proxies de Webshare via API."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.proxies = []
+        self.current_index = 0
+
+    def fetch_proxies(self) -> bool:
+        """Obtiene lista de proxies desde Webshare API."""
+        if not self.api_key:
+            return False
+
+        try:
+            response = requests.get(
+                "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=100",
+                headers={"Authorization": f"Token {self.api_key}"},
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            self.proxies = []
+            for proxy in data.get('results', []):
+                proxy_url = f"http://{proxy['username']}:{proxy['password']}@{proxy['proxy_address']}:{proxy['port']}"
+                self.proxies.append({
+                    'http': proxy_url,
+                    'https': proxy_url,
+                    'address': proxy['proxy_address'],
+                    'country': proxy.get('country_code', 'XX')
+                })
+
+            print(f"Webshare: {len(self.proxies)} proxies cargados")
+            return len(self.proxies) > 0
+
+        except Exception as e:
+            print(f"Error obteniendo proxies de Webshare: {e}")
+            return False
+
+    def get_random_proxy(self) -> Optional[dict]:
+        """Retorna un proxy aleatorio."""
+        if not self.proxies:
+            self.fetch_proxies()
+
+        if self.proxies:
+            proxy = random.choice(self.proxies)
+            return {'http': proxy['http'], 'https': proxy['https']}
+        return None
+
+    def get_next_proxy(self) -> Optional[dict]:
+        """Retorna el siguiente proxy en rotación."""
+        if not self.proxies:
+            self.fetch_proxies()
+
+        if self.proxies:
+            proxy = self.proxies[self.current_index]
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+            print(f"Usando proxy: {proxy['address']} ({proxy['country']})")
+            return {'http': proxy['http'], 'https': proxy['https']}
+        return None
+
+
+# Instancia global del gestor de proxies
+proxy_manager = WebshareProxyManager(WEBSHARE_API_KEY) if WEBSHARE_API_KEY else None
 
 
 class VaticanClient:
     def __init__(self):
         self.session = requests.Session()
-        self.proxies = get_proxy_config()
-        if self.proxies:
-            self.session.proxies.update(self.proxies)
-            print(f"Proxy configurado: {WEBSHARE_PROXY_HOST}:{WEBSHARE_PROXY_PORT}")
+        self.proxy_manager = proxy_manager
+        self._rotate_proxy()
         self._update_headers()
         self._init_session()
+
+    def _rotate_proxy(self):
+        """Rota al siguiente proxy disponible."""
+        if self.proxy_manager:
+            proxy = self.proxy_manager.get_next_proxy()
+            if proxy:
+                self.session.proxies.update(proxy)
 
     def _update_headers(self):
         """Actualiza headers con User-Agent aleatorio."""
@@ -89,8 +146,9 @@ class VaticanClient:
 
     def refresh_session(self):
         """Refresca la sesión si las cookies expiraron."""
-        print("Refrescando sesión...")
+        print("Refrescando sesion...")
         self.session.cookies.clear()
+        self._rotate_proxy()  # Rotar proxy al refrescar
         self._init_session()
 
     def _random_delay(self, min_sec=1, max_sec=3):
