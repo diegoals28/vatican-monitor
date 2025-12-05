@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/status",
+      "dest": "/api/status.py"
+    },
+    {
+      "src": "/api/dates",
+      "dest": "/api/dates.py"
+    },
+    {
+      "src": "/api/check",
+      "dest": "/api/check.py"
+    },
+    {
+      "src": "/api/clear-alerts",
+      "dest": "/api/clear-alerts.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/check",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}

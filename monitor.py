@@ -150,6 +150,16 @@ class VaticanMonitor:
         self.alerted_products.clear()
         print("Historial de alertas limpiado")
 
+    def send_periodic_summary(self):
+        """Envía resumen periódico por Telegram cada 3 horas."""
+        if self.notifier.is_configured():
+            status = self.get_status()
+            success = self.notifier.send_periodic_summary(status)
+            if success:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 📊 Resumen periódico enviado por Telegram")
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Error enviando resumen periódico")
+
     def start(self, interval_seconds: int = None):
         """Inicia el monitor con el intervalo especificado."""
         interval = interval_seconds or CHECK_INTERVAL_SECONDS
@@ -190,6 +200,16 @@ class VaticanMonitor:
             seconds=interval,
             id='vatican_check'
         )
+
+        # Programar resumen periódico cada 3 horas
+        self.scheduler.add_job(
+            self.send_periodic_summary,
+            'interval',
+            hours=3,
+            id='periodic_summary'
+        )
+        print("📊 Resumen automático: cada 3 horas")
+
         self.scheduler.start()
 
     def stop(self):

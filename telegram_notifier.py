@@ -91,6 +91,46 @@ class TelegramNotifier:
         """Envía alerta de error."""
         return self.send_message(f"❌ <b>Error:</b> {error}")
 
+    def send_periodic_summary(self, status: dict) -> bool:
+        """
+        Envía resumen periódico del estado del monitor.
+
+        Args:
+            status: dict con el estado actual del monitor
+        """
+        from datetime import datetime
+
+        message = "📊 <b>Resumen del Monitor</b>\n"
+        message += f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+
+        # Estadísticas
+        message += f"🔄 Verificaciones: {status.get('check_count', 0)}\n"
+        message += f"🔔 Alertas enviadas: {status.get('alerts_sent', 0)}\n"
+        message += f"📅 Fechas monitoreando: {len(status.get('target_dates', []))}\n"
+
+        # Fechas configuradas
+        target_dates = status.get('target_dates', [])
+        if target_dates:
+            message += f"\n📌 <b>Fechas objetivo:</b>\n"
+            for date in target_dates[:5]:  # Máximo 5 fechas para no hacer muy largo
+                message += f"  • {date}\n"
+            if len(target_dates) > 5:
+                message += f"  ... y {len(target_dates) - 5} más\n"
+
+        # Última disponibilidad encontrada
+        last_results = status.get('last_results', {})
+        if last_results:
+            message += f"\n✅ <b>Última disponibilidad:</b>\n"
+            for date, products in list(last_results.items())[:3]:
+                message += f"  📅 {date}: {len(products)} producto(s)\n"
+        else:
+            message += f"\n⏳ Sin disponibilidad encontrada aún\n"
+
+        message += f"\n⚙️ Intervalo: cada {status.get('interval_seconds', 1800)//60} min"
+        message += f"\n🟢 Monitor activo"
+
+        return self.send_message(message)
+
 
 # Test
 if __name__ == '__main__':
