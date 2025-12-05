@@ -54,19 +54,14 @@ class VaticanMonitor:
         print(f"\n[{self.last_check_time.strftime('%H:%M:%S')}] Verificando disponibilidad...")
 
         try:
-            # Si hay fechas objetivo, usarlas; sino obtener fechas aleatorias
-            if TARGET_DATES and TARGET_DATES[0]:
-                dates_to_check = TARGET_DATES
-            else:
-                # Obtener todas las fechas abiertas y seleccionar unas pocas aleatorias
-                all_dates = self.client.get_available_dates(DEFAULT_VISIT_TAG)
-                # Priorizar fechas cercanas (primeras 30) y seleccionar aleatoriamente
-                priority_dates = all_dates[:30] if len(all_dates) > 30 else all_dates
-                dates_to_check = random.sample(
-                    priority_dates,
-                    min(MAX_DATES_PER_CHECK, len(priority_dates))
-                )
-                print(f"  Consultando {len(dates_to_check)} fechas aleatorias: {', '.join(dates_to_check)}")
+            # SOLO consultar las fechas objetivo especificadas
+            if not TARGET_DATES or not TARGET_DATES[0]:
+                print("  ⚠️ No hay fechas configuradas en TARGET_DATES")
+                print("  Configura TARGET_DATES en .env (formato: DD/MM/YYYY,DD/MM/YYYY,...)")
+                return
+
+            dates_to_check = [d.strip() for d in TARGET_DATES if d.strip()]
+            print(f"  Consultando {len(dates_to_check)} fechas: {', '.join(dates_to_check)}")
 
             # Obtener disponibilidad para esas fechas
             availability = {}
@@ -151,9 +146,10 @@ class VaticanMonitor:
             print(f"🔍 Filtro de producto: {PRODUCT_FILTER}")
 
         if TARGET_DATES and TARGET_DATES[0]:
-            print(f"📅 Fechas objetivo: {', '.join(TARGET_DATES)}")
+            print(f"📅 Fechas a monitorear: {', '.join(TARGET_DATES)}")
         else:
-            print("📅 Monitoreando todas las fechas disponibles")
+            print("⚠️  ADVERTENCIA: No hay fechas configuradas!")
+            print("   Configura TARGET_DATES en .env (ej: TARGET_DATES=15/01/2026,20/01/2026)")
 
         if self.notifier.is_configured():
             print("📱 Notificaciones Telegram: ✅ Activas")
