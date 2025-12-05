@@ -4,22 +4,38 @@ Versión actualizada con los nuevos endpoints (Diciembre 2025)
 """
 import sys
 import io
+import os
+import json
 import time
 import random
 from datetime import datetime
-from typing import Set
+from typing import Set, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from vatican_client import VaticanClient
 from telegram_notifier import TelegramNotifier
 from config import (
     CHECK_INTERVAL_SECONDS,
-    TARGET_DATES,
     DEFAULT_VISIT_TAG,
     DEFAULT_WHO_ID,
     DEFAULT_VISITOR_NUM,
     PRODUCT_FILTER,
     MAX_DATES_PER_CHECK
 )
+
+# Archivo para las fechas configuradas desde el frontend
+DATES_FILE = 'target_dates.json'
+
+
+def load_target_dates() -> List[str]:
+    """Carga las fechas desde el archivo JSON."""
+    if os.path.exists(DATES_FILE):
+        try:
+            with open(DATES_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('dates', [])
+        except:
+            pass
+    return []
 
 # Fix encoding for Windows console (emojis)
 if sys.platform == 'win32':
@@ -54,13 +70,15 @@ class VaticanMonitor:
         print(f"\n[{self.last_check_time.strftime('%H:%M:%S')}] Verificando disponibilidad...")
 
         try:
-            # SOLO consultar las fechas objetivo especificadas
-            if not TARGET_DATES or not TARGET_DATES[0]:
-                print("  ⚠️ No hay fechas configuradas en TARGET_DATES")
-                print("  Configura TARGET_DATES en .env (formato: DD/MM/YYYY,DD/MM/YYYY,...)")
+            # Cargar fechas desde el archivo JSON (actualizado desde el frontend)
+            target_dates = load_target_dates()
+
+            if not target_dates:
+                print("  ⚠️ No hay fechas configuradas")
+                print("  Agrega fechas desde el frontend: http://localhost:5001")
                 return
 
-            dates_to_check = [d.strip() for d in TARGET_DATES if d.strip()]
+            dates_to_check = [d.strip() for d in target_dates if d.strip()]
             print(f"  Consultando {len(dates_to_check)} fechas: {', '.join(dates_to_check)}")
 
             # Obtener disponibilidad para esas fechas
@@ -145,11 +163,12 @@ class VaticanMonitor:
         if PRODUCT_FILTER:
             print(f"🔍 Filtro de producto: {PRODUCT_FILTER}")
 
-        if TARGET_DATES and TARGET_DATES[0]:
-            print(f"📅 Fechas a monitorear: {', '.join(TARGET_DATES)}")
+        target_dates = load_target_dates()
+        if target_dates:
+            print(f"📅 Fechas a monitorear: {', '.join(target_dates)}")
         else:
-            print("⚠️  ADVERTENCIA: No hay fechas configuradas!")
-            print("   Configura TARGET_DATES en .env (ej: TARGET_DATES=15/01/2026,20/01/2026)")
+            print("⚠️  No hay fechas configuradas aún")
+            print("   Agrega fechas desde: http://localhost:5001")
 
         if self.notifier.is_configured():
             print("📱 Notificaciones Telegram: ✅ Activas")
@@ -187,7 +206,7 @@ class VaticanMonitor:
             'alerts_sent': self.alerts_sent,
             'last_results': self.last_results,
             'alerted_products_count': len(self.alerted_products),
-            'target_dates': TARGET_DATES,
+            'target_dates': load_target_dates(),
             'visit_tag': DEFAULT_VISIT_TAG,
             'visitor_num': DEFAULT_VISITOR_NUM,
             'product_filter': PRODUCT_FILTER,
