@@ -413,67 +413,111 @@
 
     <script>
         let selectedDate = null;
+        const CACHE_KEY = 'vatican_status_cache';
+        let pollingInterval = 30000; // 30 seconds default
+        let pollTimer = null;
+        let isLoading = false;
+
+        // Load cached data immediately
+        function loadCachedData() {
+            try {
+                const cached = localStorage.getItem(CACHE_KEY);
+                if (cached) {
+                    const data = JSON.parse(cached);
+                    renderStatus(data);
+                }
+            } catch (e) {
+                console.error('Error loading cache:', e);
+            }
+        }
+
+        function renderStatus(data) {
+            // Badge de estado
+            const badge = document.getElementById('statusBadge');
+            if (data.running) {
+                badge.textContent = 'Activo';
+                badge.className = 'status-badge running';
+            } else {
+                badge.textContent = 'Detenido';
+                badge.className = 'status-badge stopped';
+            }
+
+            // Estadísticas
+            document.getElementById('checkCount').textContent = data.check_count || 0;
+            document.getElementById('alertsSent').textContent = data.alerts_sent || 0;
+            document.getElementById('interval').textContent = (data.interval_seconds || 1800) + 's';
+
+            // Última verificación
+            if (data.last_check) {
+                const date = new Date(data.last_check);
+                document.getElementById('lastCheck').textContent =
+                    'Última: ' + date.toLocaleTimeString();
+            }
+
+            // Resultados
+            const resultsList = document.getElementById('resultsList');
+            const results = data.last_results || {};
+            const dates = Object.keys(results);
+            document.getElementById('availableCount').textContent = dates.length;
+
+            if (dates.length > 0) {
+                let html = '';
+                for (const date of dates) {
+                    html += `
+                        <div class="result-item">
+                            <span class="result-date">📅 ${date}</span>
+                            <div class="result-slots">
+                                ${results[date].map(p => {
+                                    const status = p.availability === 'AVAILABLE' ? 'DISP' :
+                                                   p.availability === 'LOW_AVAILABILITY' ? 'POCAS' : p.time || 'N/A';
+                                    return `<span class="result-slot">${status}</span>`;
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                resultsList.innerHTML = html;
+            } else {
+                resultsList.innerHTML = '<div class="no-results">No hay disponibilidad detectada</div>';
+            }
+
+            // Botones
+            document.getElementById('startBtn').disabled = data.running;
+            document.getElementById('stopBtn').disabled = !data.running;
+        }
 
         // Actualizar estado
         async function updateStatus() {
+            if (isLoading) return;
+            isLoading = true;
+
             try {
                 const response = await fetch('/api/status');
                 const data = await response.json();
 
-                // Badge de estado
-                const badge = document.getElementById('statusBadge');
-                if (data.running) {
-                    badge.textContent = 'Activo';
-                    badge.className = 'status-badge running';
-                } else {
-                    badge.textContent = 'Detenido';
-                    badge.className = 'status-badge stopped';
-                }
+                // Cache the data
+                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
 
-                // Estadísticas
-                document.getElementById('checkCount').textContent = data.check_count;
-                document.getElementById('alertsSent').textContent = data.alerts_sent;
-                document.getElementById('interval').textContent = data.interval_seconds + 's';
-
-                // Última verificación
-                if (data.last_check) {
-                    const date = new Date(data.last_check);
-                    document.getElementById('lastCheck').textContent =
-                        'Última: ' + date.toLocaleTimeString();
-                }
-
-                // Resultados
-                const resultsList = document.getElementById('resultsList');
-                const results = data.last_results;
-                const dates = Object.keys(results);
-                document.getElementById('availableCount').textContent = dates.length;
-
-                if (dates.length > 0) {
-                    let html = '';
-                    for (const date of dates) {
-                        html += `
-                            <div class="result-item">
-                                <span class="result-date">📅 ${date}</span>
-                                <div class="result-slots">
-                                    ${results[date].map(s =>
-                                        `<span class="result-slot">${s.time}</span>`
-                                    ).join('')}
-                                </div>
-                            </div>
-                        `;
-                    }
-                    resultsList.innerHTML = html;
-                } else {
-                    resultsList.innerHTML = '<div class="no-results">No hay disponibilidad detectada</div>';
-                }
-
-                // Botones
-                document.getElementById('startBtn').disabled = data.running;
-                document.getElementById('stopBtn').disabled = !data.running;
-
+                renderStatus(data);
             } catch (error) {
                 console.error('Error:', error);
+            } finally {
+                isLoading = false;
             }
+        }
+
+        // Adaptive polling: faster after user action
+        function setFastPolling() {
+            clearInterval(pollTimer);
+            pollingInterval = 10000; // 10 seconds after action
+            pollTimer = setInterval(updateStatus, pollingInterval);
+
+            // Reset to normal after 2 minutes
+            setTimeout(() => {
+                clearInterval(pollTimer);
+                pollingInterval = 30000;
+                pollTimer = setInterval(updateStatus, pollingInterval);
+            }, 120000);
         }
 
         // Cargar calendario
@@ -538,7 +582,7 @@
                 if (el.title === date) el.classList.add('selected');
             });
 
-            // Cargar horarios
+            // Cargar horarios (nota: este endpoint no existe aún en el backend)
             try {
                 const response = await fetch(`/api/timeslots/${date.replace(/\//g, '-')}`);
                 const data = await response.json();
@@ -560,36 +604,75 @@
 
             } catch (error) {
                 console.error('Error:', error);
+                document.getElementById('timeslotsGrid').innerHTML =
+                    '<div style="color:#888">Horarios no disponibles</div>';
             }
         }
 
         // Acciones
         async function checkNow() {
-            await fetch('/api/check-now', { method: 'POST' });
-            updateStatus();
+            const btn = event.target;
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = 'Verificando...';
+
+            try {
+                await fetch('/api/check-now', { method: 'POST' });
+                await updateStatus();
+                setFastPolling();
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔍 Verificar Ahora';
+            }
         }
 
         async function clearAlerts() {
-            await fetch('/api/clear-alerts', { method: 'POST' });
-            updateStatus();
+            const btn = event.target;
+            if (btn.disabled) return;
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/clear-alerts', { method: 'POST' });
+                await updateStatus();
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         async function startMonitor() {
-            await fetch('/api/start', { method: 'POST' });
-            updateStatus();
+            const btn = document.getElementById('startBtn');
+            if (btn.disabled) return;
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/start', { method: 'POST' });
+                await updateStatus();
+                setFastPolling();
+            } finally {
+                // updateStatus will set the proper disabled state
+            }
         }
 
         async function stopMonitor() {
-            await fetch('/api/stop', { method: 'POST' });
-            updateStatus();
+            const btn = document.getElementById('stopBtn');
+            if (btn.disabled) return;
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/stop', { method: 'POST' });
+                await updateStatus();
+            } finally {
+                // updateStatus will set the proper disabled state
+            }
         }
 
-        // Inicializar
+        // Inicializar: cargar caché primero, luego datos frescos
+        loadCachedData();
         updateStatus();
         loadCalendar();
 
-        // Actualizar cada 5 segundos
-        setInterval(updateStatus, 5000);
+        // Polling cada 30 segundos (antes era 5 segundos)
+        pollTimer = setInterval(updateStatus, pollingInterval);
     </script>
 </body>
 </html>

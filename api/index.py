@@ -193,23 +193,54 @@ class handler(BaseHTTPRequestHandler):
 
     <script>
         const API_BASE = '/api';
+        const CACHE_KEY = 'vatican_status_cache';
+        let pollingInterval = 30000; // 30 seconds default
+        let pollTimer = null;
+        let isLoading = false;
+
+        // Load cached data immediately on page load
+        function loadCachedData() {
+            try {
+                const cached = localStorage.getItem(CACHE_KEY);
+                if (cached) {
+                    const data = JSON.parse(cached);
+                    updateUI(data);
+                    document.getElementById('lastUpdate').textContent =
+                        'Cargando datos actualizados...';
+                }
+            } catch (e) {
+                console.error('Error loading cache:', e);
+            }
+        }
+
+        function updateUI(data) {
+            document.getElementById('checkCount').textContent = data.check_count || 0;
+            document.getElementById('alertCount').textContent = data.alerts_sent || 0;
+            document.getElementById('dateCount').textContent = (data.target_dates || []).length;
+            renderDates(data.target_dates || []);
+            renderResults(data.last_results || {});
+        }
 
         async function loadStatus() {
+            if (isLoading) return;
+            isLoading = true;
+
             try {
                 const res = await fetch(`${API_BASE}/status`);
                 const data = await res.json();
 
-                document.getElementById('checkCount').textContent = data.check_count || 0;
-                document.getElementById('alertCount').textContent = data.alerts_sent || 0;
-                document.getElementById('dateCount').textContent = (data.target_dates || []).length;
+                // Cache the data
+                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
 
-                renderDates(data.target_dates || []);
-                renderResults(data.last_results || {});
-
+                updateUI(data);
                 document.getElementById('lastUpdate').textContent =
-                    'Ultima actualizacion: ' + new Date().toLocaleTimeString();
+                    'Actualizado: ' + new Date().toLocaleTimeString();
             } catch (e) {
                 console.error('Error loading status:', e);
+                document.getElementById('lastUpdate').textContent =
+                    'Error al actualizar - reintentando...';
+            } finally {
+                isLoading = false;
             }
         }
 
@@ -235,9 +266,29 @@ class handler(BaseHTTPRequestHandler):
             container.innerHTML = entries.map(([date, products]) => `
                 <div class="result-item">
                     <strong>${date}</strong><br>
-                    ${products.map(p => p.name || 'Producto').join('<br>')}
+                    ${products.map(p => {
+                        const status = p.availability === 'AVAILABLE' ? 'DISP' :
+                                       p.availability === 'LOW_AVAILABILITY' ? 'POCAS' : 'AGOT';
+                        const color = p.availability === 'AVAILABLE' ? '#4ade80' :
+                                      p.availability === 'LOW_AVAILABILITY' ? '#fbbf24' : '#ef4444';
+                        return `<span style="color:${color}">[${status}]</span> ${p.name || 'Producto'}`;
+                    }).join('<br>')}
                 </div>
             `).join('');
+        }
+
+        // Adaptive polling: faster after user action
+        function setFastPolling() {
+            clearInterval(pollTimer);
+            pollingInterval = 10000; // 10 seconds after action
+            pollTimer = setInterval(loadStatus, pollingInterval);
+
+            // Reset to normal after 2 minutes
+            setTimeout(() => {
+                clearInterval(pollTimer);
+                pollingInterval = 30000;
+                pollTimer = setInterval(loadStatus, pollingInterval);
+            }, 120000);
         }
 
         async function addDate() {
@@ -256,6 +307,7 @@ class handler(BaseHTTPRequestHandler):
                 });
                 input.value = '';
                 loadStatus();
+                setFastPolling();
             } catch (e) {
                 alert('Error agregando fecha');
             }
@@ -269,6 +321,7 @@ class handler(BaseHTTPRequestHandler):
                     body: JSON.stringify({ date })
                 });
                 loadStatus();
+                setFastPolling();
             } catch (e) {
                 alert('Error eliminando fecha');
             }
@@ -276,6 +329,9 @@ class handler(BaseHTTPRequestHandler):
 
         async function checkNow() {
             const btn = event.target;
+            if (btn.disabled) return;
+
+            btn.disabled = true;
             btn.classList.add('loading');
             btn.textContent = 'Verificando...';
 
@@ -283,32 +339,41 @@ class handler(BaseHTTPRequestHandler):
                 const res = await fetch(`${API_BASE}/check`, { method: 'POST' });
                 const data = await res.json();
                 loadStatus();
+                setFastPolling();
 
                 if (data.availability && Object.keys(data.availability).length > 0) {
-                    alert('¡Disponibilidad encontrada!');
+                    alert('Disponibilidad encontrada!');
                 } else {
                     alert('Sin disponibilidad');
                 }
             } catch (e) {
                 alert('Error verificando');
             } finally {
+                btn.disabled = false;
                 btn.classList.remove('loading');
                 btn.textContent = 'Verificar Ahora';
             }
         }
 
         async function clearAlerts() {
+            const btn = event.target;
+            if (btn.disabled) return;
+
+            btn.disabled = true;
             try {
                 await fetch(`${API_BASE}/clear-alerts`, { method: 'POST' });
                 loadStatus();
             } catch (e) {
                 alert('Error limpiando alertas');
+            } finally {
+                btn.disabled = false;
             }
         }
 
-        // Load initial status and refresh every 30 seconds
+        // Initialize: load cache first, then fetch fresh data
+        loadCachedData();
         loadStatus();
-        setInterval(loadStatus, 30000);
+        pollTimer = setInterval(loadStatus, pollingInterval);
     </script>
 </body>
 </html>'''

@@ -142,6 +142,42 @@ def increment_alerts_sent() -> int:
     return new_count
 
 
+def update_status_with_results(last_check: str, last_results: dict,
+                                increment_check: bool = True,
+                                increment_alert: bool = False) -> dict:
+    """
+    Update status with results and optionally increment counters in a single operation.
+    Returns the updated status.
+    """
+    status = get_status()
+    updates = {
+        'id': 1,
+        'last_check': last_check,
+        'last_results': last_results,
+        'updated_at': datetime.now().isoformat()
+    }
+
+    if increment_check:
+        updates['check_count'] = status.get('check_count', 0) + 1
+    if increment_alert:
+        updates['alerts_sent'] = status.get('alerts_sent', 0) + 1
+
+    try:
+        headers = _headers()
+        headers['Prefer'] = 'resolution=merge-duplicates'
+        response = requests.post(
+            _api_url('monitor_status'),
+            headers=headers,
+            json=updates
+        )
+        if response.status_code in [200, 201]:
+            return updates
+    except Exception as e:
+        print(f"Error updating status with results: {e}")
+
+    return status
+
+
 # ============ ALERTED PRODUCTS ============
 
 def get_alerted_products() -> set:
@@ -173,6 +209,28 @@ def add_alerted_product(product_key: str) -> bool:
         )
         return response.status_code in [200, 201]
     except:
+        return False
+
+
+def add_alerted_products_batch(product_keys: list) -> bool:
+    """Add multiple products to alerted set in a single request."""
+    if not product_keys:
+        return True
+
+    now = datetime.now().isoformat()
+    records = [{'product_key': key, 'alerted_at': now} for key in product_keys]
+
+    try:
+        headers = _headers()
+        headers['Prefer'] = 'resolution=ignore-duplicates'
+        response = requests.post(
+            _api_url('alerted_products'),
+            headers=headers,
+            json=records
+        )
+        return response.status_code in [200, 201]
+    except Exception as e:
+        print(f"Error adding alerted products batch: {e}")
         return False
 
 

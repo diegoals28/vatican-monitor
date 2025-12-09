@@ -12,8 +12,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.db import (
-    get_dates, get_status, update_status, increment_check_count,
-    increment_alerts_sent, get_alerted_products, add_alerted_product
+    get_dates, get_status, update_status_with_results,
+    get_alerted_products, add_alerted_products_batch
 )
 from vatican_client import VaticanClient
 from telegram_notifier import TelegramNotifier
@@ -75,18 +75,10 @@ class handler(BaseHTTPRequestHandler):
                 if products:
                     availability[date] = products
 
-            # Increment check count
-            check_count = increment_check_count()
-
-            # Update last results
-            update_status(
-                last_check=datetime.now().isoformat(),
-                last_results=availability
-            )
-
             # Filter new availability (not alerted before)
             alerted = get_alerted_products()
             new_availability = {}
+            new_product_keys = []
 
             for date, products in availability.items():
                 new_products = []
@@ -94,17 +86,29 @@ class handler(BaseHTTPRequestHandler):
                     key = f"{date}_{product.get('id', 0)}"
                     if key not in alerted:
                         new_products.append(product)
-                        add_alerted_product(key)
+                        new_product_keys.append(key)
 
                 if new_products:
                     new_availability[date] = new_products
 
             # Send Telegram alert for new availability
-            alerts_sent = 0
+            alert_sent = False
             if new_availability and notifier.is_configured():
                 success = notifier.send_availability_alert(new_availability)
                 if success:
-                    alerts_sent = increment_alerts_sent()
+                    alert_sent = True
+                    # Batch insert all new product keys
+                    add_alerted_products_batch(new_product_keys)
+
+            # Update status with results and increment counters in one operation
+            updated_status = update_status_with_results(
+                last_check=datetime.now().isoformat(),
+                last_results=availability,
+                increment_check=True,
+                increment_alert=alert_sent
+            )
+            check_count = updated_status.get('check_count', 0)
+            alerts_sent = updated_status.get('alerts_sent', 0) if alert_sent else 0
 
             self._send_response({
                 'success': True,
